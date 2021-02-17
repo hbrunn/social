@@ -1,0 +1,67 @@
+name: OCA MQT
+on: [push]
+
+jobs:
+  test:
+    name: Test Odoo
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.6"]
+        odoo-version: ["12.0"]
+        mqt-stage: ["lint", "test-odoo", "test-ocb"]
+        mqt-dep: ["PIP"] # or OCA
+        include:
+          - mqt-stage: "lint"
+            mqt-test: "0"
+            mqt-lint: "1"
+            mqt-makepot: "0"
+          - mqt-stage: "test-odoo"
+            mqt-odoo-repo: "odoo/odoo"
+            mqt-test: "1"
+            mqt-lint: "0"
+            mqt-makepot: "1"
+          - mqt-stage: "test-ocb"
+            mqt-odoo-repo: "oca/ocb"
+            mqt-test: "1"
+            mqt-lint: "0"
+            mqt-makepot: "0"
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install packages and configure environment
+      run: |
+        sudo apt install postgresql-contrib libcups2-dev libxml2-dev libxslt1-dev libldap2-dev libsasl2-dev expect-dev
+        sudo systemctl start postgresql
+        sudo -u postgres createuser --superuser runner
+        git config --global init.defaultBranch ${{matrix.odoo-version}}
+        git config --global advice.detachedHead false
+        git config --global pull.rebase false
+        git config --global user.email "runner@github.com"
+        git config --global user.name "Test runner"
+    - name: Set up Python ${{matrix.python-version}}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{matrix.python-version}}
+    - name: Install MQT
+      run: |
+        git clone https://github.com/oca/maintainer-quality-tools $HOME/maintainer-quality-tools
+        echo "$HOME/maintainer-quality-tools/travis" >> $GITHUB_PATH
+    - name: Set Travis env
+      run: |
+        echo "ODOO_REPO=${{matrix.mqt-odoo-repo}}" >> $GITHUB_ENV
+        echo "TESTS=${{matrix.mqt-test}}" >> $GITHUB_ENV
+        echo "LINT_CHECK=${{matrix.mqt-lint}}" >> $GITHUB_ENV
+        echo "MAKEPOT=${{matrix.mqt-makepot}}" >> $GITHUB_ENV
+        echo "VERSION=${{matrix.odoo-version}}" >> $GITHUB_ENV
+        echo "MQT_DEP=${{matrix.mqt-dep}}" >> $GITHUB_ENV
+        echo "TRAVIS_COMMIT=$GITHUB_SHA" >> $GITHUB_ENV
+        echo "TRAVIS_PULL_REQUEST_BRANCH=$GITHUB_HEAD_REF" >> $GITHUB_ENV
+        echo "TRAVIS_PULL_REQUEST_SHA=$GITHUB_SHA" >> $GITHUB_ENV
+        echo "TRAVIS_BUILD_DIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+    - name: Run MQT
+      run: |
+        sudo chown $USER -R /usr/local
+        travis_install_nightly
+        travis_run_tests
+        travis_after_tests_success
