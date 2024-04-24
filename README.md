@@ -5,6 +5,9 @@
 Social addons for Odoo
 ======================
 
+![logo-python-shell](https://github.com/hbrunn/social/assets/2563186/2640b881-1610-4978-9177-07719ff4e383)
+
+
 Addons concerning Odoo's social ERP features and messaging in general
 
 [//]: # (addons)
