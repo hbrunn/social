@@ -3,6 +3,8 @@ on:
   pull_request:
     types: [opened]
   push:
+    branches:
+      - 18.0
     paths:
       - .banned.txt
 jobs:
@@ -29,7 +31,7 @@ jobs:
 
           banned_handles = []
 
-          with file(".banned.txt") as banned_file:
+          with open(".banned.txt") as banned_file:
             for banned_handle in banned_file:
               banned_handle = banned_handle.strip()
               if banned_handle.startswith("#"):
