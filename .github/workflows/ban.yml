@@ -1,0 +1,52 @@
+name: Enforce .banned.txt
+on:
+  pull_request:
+    types: [opened]
+  push:
+    paths:
+      - .banned.txt
+jobs:
+  enforce_banned:
+    name: Enforce banned.txt
+    steps:
+      - uses: actions/checkout@v4
+        ref: ${{ github.base_ref || github.ref_name }}
+        sparse-checkout: |
+          banned.txt
+        sparse-checkout-cone-mode: false
+      - run: pip install PyGithub
+      - shell: python
+        run: |
+          from github import Auth, Github
+
+          auth = Auth.Token("${{ github.token }}")
+          gh = Github(auth=auth)
+
+          ignore = [
+          ]
+
+          banned_handles = []
+
+          with file(".banned.txt") as banned_file:
+            for banned_handle in banned_file:
+              banned_handle = banned_handle.strip()
+              if banned_handle.startswith("#"):
+                continue
+              if banned_handle in ignore:
+                continue
+              banned_handles.append(banned_handle)
+
+          repo = gh.get_repo("${{ github.repository }}")
+          pr_number = "${{ github.event_name == 'pull_request' && github.event.number || 0 }}"
+          if pr_number:
+            prs = [repo.get_pull(pr_number)]
+          else:
+            prs = repo.get_pulls(
+              state="open", sort="created", base="${{ github.base_ref || github.ref_name }}"
+            )
+
+          for pr in prs:
+            if pr.user.login in banned_handles:
+              issue = repo.get_issue(number=pr.number)
+              issue.create_comment(f"{pr.user.login} has been banned, closing PR")
+              issue.edit(state='closed')
