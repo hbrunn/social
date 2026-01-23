@@ -41,7 +41,7 @@ jobs:
               banned_handles.append(banned_handle)
 
           repo = gh.get_repo("${{ github.repository }}")
-          pr_number = "${{ github.event_name == 'pull_request' && github.event.number || 0 }}"
+          pr_number = int("${{ github.event_name == 'pull_request' && github.event.number || 0 }}")
           if pr_number:
             prs = [repo.get_pull(pr_number)]
           else:
