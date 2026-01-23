@@ -1,0 +1,126 @@
+name: Remind/enforce reciprocity
+on:
+  pull_request:
+    types: [opened]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+jobs:
+  reciprocity:
+  #  if: ${{ github.repository_owner == 'OCA' }}
+    name: Remind/enforce reciprocity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install prerequisites
+        id: setup
+        run: |
+          pip install PyGithub
+          pip install requests
+      - name: Check open PRs for reciprocity 
+        shell: python
+        run: |
+          import requests
+          import string
+          import sys
+          from collections import defaultdict
+          from datetime import date, timedelta
+          from github import Auth, Github
+
+          auth = Auth.Token("${{ github.token }}")
+          gh = Github(auth=auth)
+          repo = gh.get_repo("${{ github.repository }}")
+
+          handle2lines_reviewed = defaultdict(int)
+          handle2lines_pred = defaultdict(int)
+          all_pr_lines = 0
+
+          # reviews older than that don't count
+          cutoff_date_review = (date.today() - timedelta(days=3*31)).isoformat()
+          # if we warned on a PR before this date, close it if still not
+          # satisfying reciprocity
+          cutoff_date_warning = (date.today() - timedelta(days=21)).isoformat()
+
+          message_template_more_reviews = string.Template(
+          """
+          Thanks @$handle for your input. As you know, PRs to OCA repositories
+          are reviewed by volunteers such as yourself. The system only works if
+          everyone opening PRs also reviews at least twice as much code.
+
+          This is not the case for you, as you submitted roughly $lines_pred
+          lines while you only reviewed $lines_reviewed lines in the past months.
+
+          Please review more PRs from this repository.
+          """
+          )
+
+          ignore_handles = set([
+            'OCT-git-bot',
+            'github-actions',
+          ])
+          ignore_labels = set([
+            'no reciprocity',
+          ])
+
+          # create stats about who created prs and who reviewed prs
+          for pr in repo.get_pulls(state="all", sort="created"):
+            handle = pr.user.login
+
+            pr_lines = sum(
+              # this adds an error of 2 lines per file touched, but seems
+              # acceptable for version 1
+              # ignores binary files, which is what we want
+              1 if line.startswith('+') or line.startswith('-') else 0
+              for line in requests.get(pr.diff_url).text.splitlines()
+            )
+
+            # for lines PRed, only count open PRs
+            if pr.state == 'open' and not pr.draft:
+              all_pr_lines += pr_lines
+              handle2lines_pred[handle] += pr_lines 
+
+            # for lines reviewed, count any pr, and any review before the cutoff date
+            seen = set([])
+            for review in pr.get_reviews():
+              review_handle = review.user.login
+              if review_handle in seen or review_handle == handle:
+                continue
+              if review.submitted_at < cutoff_date_review:
+                continue
+              seen.add(review_handle)
+              handle2lines_reviewed[review_handle] += pr_lines
+
+          pr_number = ${{ github.event_name == 'pull_request' && github.event.number || 0 }}
+          if pr_number:
+            prs = [repo.get_pull(pr_number)]
+          else:
+            prs = repo.get_pulls(state="open", sort="created")
+
+          for pr in prs:
+            handle = pr.user.login
+            if handle in ignore_handles:
+              continue
+            if set(label.name for label in pr.get_labels()) & ignore_labels:
+              continue
+            # this is the main check: review at least double the prs/lines you create,
+            # but don't ask for impossible reviews
+            if all_pr_lines - handle2lines_pred[handle] < 2 * handle2lines_pred[handle]:
+              continue
+            if handle2lines_reviewed[handle] < 2 * handle2lines_pred[handle]:
+              issue = pr.as_issue()
+              message = message_template_more_reviews.substitute(
+                handle=handle,
+                lines_pred=handle2lines_pred[handle],
+                lines_reviewed=handle2lines_reviewed[handle],
+              )
+              first_paragraph = message.split('\n\n', 1)[0]
+
+              for comment in issue.get_comments():
+                if not comment.body:
+                  continue
+                if comment.body.startswith(first_paragraph):
+                  if comment.created_at < cutoff_date_warning:
+                    issue.create_comment("Closing as review quota not reached after asking nicely")
+                    issue.edit(state='closed')
+                  break
+              else:
+                issue.create_comment(message)
