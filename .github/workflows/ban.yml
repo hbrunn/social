@@ -1,0 +1,59 @@
+name: Enforce .banned.txt
+on:
+  pull_request:
+    types: [opened]
+  push:
+    branches:
+    #  - "{{ odoo_version }}"
+    paths:
+      - .banned.txt
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+jobs:
+  enforce_banned:
+    name: Enforce .banned.txt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retrieve banned.txt and install prerequisites
+        id: setup
+        run: |
+          curl --fail --location -o .banned.txt https://github.com/${{ github.repository }}/raw/HEAD/.banned.txt || true
+          if [ -s .banned.txt ]; then
+            echo "has_banned=1" >> $GITHUB_OUTPUT
+            pip install PyGithub
+          fi
+      - name: Close PRs by banned users 
+        if: ${{ steps.setup.outputs.has_banned }}
+        shell: python
+        run: |
+          import sys
+          from github import Auth, Github
+
+          auth = Auth.Token("${{ github.token }}")
+          gh = Github(auth=auth)
+
+          banned_handles = []
+
+          with open(".banned.txt") as banned_file:
+            for banned_handle in banned_file:
+              banned_handle = banned_handle.strip()
+              if banned_handle.startswith("#"):
+                continue
+              banned_handles.append(banned_handle)
+
+          if not banned_handles:
+            sys.exit(0)
+
+          repo = gh.get_repo("${{ github.repository }}")
+          pr_number = ${{ github.event_name == 'pull_request' && github.event.number || 0 }}
+          if pr_number:
+            prs = [repo.get_pull(pr_number)]
+          else:
+            prs = repo.get_pulls(state="open", sort="created")
+
+          for pr in prs:
+            if pr.user.login in banned_handles:
+              issue = repo.get_issue(number=pr.number)
+              issue.create_comment(f"@{pr.user.login} has been banned, closing PR")
+              issue.edit(state='closed')
